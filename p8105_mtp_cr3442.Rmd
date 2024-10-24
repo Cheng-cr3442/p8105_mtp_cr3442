@@ -1,0 +1,142 @@
+---
+title: "p8105_mtp_cr3442"
+author: "Cheng Rao"
+date: "2024-10-23"
+output: github_document
+toc: TRUE
+---
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(patchwork)
+library(rvest)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8,
+  out.width = "90%"
+)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+
+# Report
+
+## Problem 1 – Data Import and Cleaning
+
+### Introduction
+
+First, I imported and clean the data by 3 steps.
+
+### Step 1: Import and Clean NYC Rental Data
+```{r import_clean_nyc_rental}
+# Import NYC Rental Data and ZIP Code Data
+nyc_rental = read_csv("./data/Zip_zori_uc_sfrcondomfr_sm_month_NYC.csv") %>%
+  janitor::clean_names()
+
+# Import Supplementary Dataset to Get Borough and Neighborhood Information
+zip_data = read_html("./data/supplementary dataset.html") %>%
+  html_table() %>%
+  .[[1]] %>%
+  janitor::clean_names() %>%
+  mutate(
+    borough = case_when(
+      county == "New York" ~ "Manhattan",
+      county == "Kings" ~ "Brooklyn",
+      county == "Queens" ~ "Queens",
+      county == "Bronx" ~ "Bronx",
+      county == "Richmond" ~ "Staten Island"
+    )
+  )
+
+# Standardize ZIP Code Column Name
+nyc_rental = nyc_rental %>%
+  rename(zip_code = region_name) %>%
+  mutate(zip_code = as.character(zip_code))
+
+# Ensure ZIP Code Column in Supplementary Data is Character Type
+zip_data = zip_data %>%
+  mutate(zip_code = as.character(zip_code))
+
+# Merge NYC Rental Data with ZIP Code Data
+nyc_data = nyc_rental %>%
+  left_join(zip_data, by = "zip_code") %>%
+  filter(!is.na(borough)) %>%  # Filter Out Rows Without Matching Borough
+  select(zip_code, neighborhood, borough, county, starts_with("x"))  
+```
+
+### Step 2: Import and Clean ZHVI Data
+```{r import_clean_zhvi}
+# Import ZHVI Data
+zhvi_data = read_csv("./data/Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month_2023.csv") %>%
+  janitor::clean_names() %>%
+  rename(zip_code = region_name) %>%
+  mutate(zip_code = as.character(zip_code))
+
+# Convert ZHVI Data to Long Format
+zhvi_long = zhvi_data %>%
+  pivot_longer(
+    cols = starts_with("x"),
+    names_to = "date",
+    values_to = "zhvi_price"
+  ) %>%
+  mutate(date = as.Date(date, format = "x%Y_%m_%d"))  
+```
+
+### Step 3: Convert ZORI Data to Long Format
+```{r pivot_zori}
+# Convert ZORI Data to Long Format
+zori_long = nyc_data %>%
+  pivot_longer(
+    cols = starts_with("x"),
+    names_to = "date",
+    values_to = "zori_rental_price"
+  ) %>%
+  mutate(date = as.Date(date, format = "x%Y_%m_%d")) 
+```
+
+## Problem 2 – Quality Control and EDA
+
+
+
+### Average Rental Price by Borough and Year
+```{r avg_rent_by_borough}
+# Calculate Average Rental Price by Borough and Year
+avg_rent_by_borough_year = zori_long %>%
+  mutate(year = lubridate::year(date)) %>%
+  group_by(borough, year) %>%
+  summarise(avg_rental_price = mean(zori_rental_price, na.rm = TRUE)) %>%
+  arrange(borough, year)
+
+# Display Table
+avg_rent_by_borough_year %>%
+  knitr::kable(digits = 2, caption = "Average Rental Price by Borough and Year")
+```
+
+### Rental Price Drop During COVID-19
+```{r rental_price_drop}
+# Compare Rental Prices in January 2021 to January 2020
+covid_rent_drop = zori_long %>%
+  filter(date == as.Date("2020-01-31") | date == as.Date("2021-01-31")) %>%
+  pivot_wider(names_from = date, values_from = zori_rental_price) %>%
+  mutate(price_drop = `2020-01-31` - `2021-01-31`) %>%
+  group_by(borough) %>%
+  filter(price_drop == max(price_drop, na.rm = TRUE)) %>%
+  select(borough, neighborhood, price_drop)
+
+# Display Table
+covid_rent_drop %>%
+  knitr::kable(digits = 2, caption = "Largest Rental Price Drop from 2020 to 2021 by Borough")
+```
+
